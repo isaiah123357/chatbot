@@ -1,4 +1,4 @@
-"""ASRS Bot Pro: AI grant-writing assistant for Advance Student Resource Systems."""
+"""ASRS Bot Pro: grant development assistant for Advance Student Resource Systems, Inc."""
 import base64
 import hmac
 import io
@@ -11,31 +11,52 @@ import streamlit as st
 
 from knowledge import PROGRAMS, SYSTEM_PROMPT, TEMPLATES
 
-MODEL = "claude-sonnet-5-5"
-MAX_HISTORY = 20          # messages sent to the AI per turn (keeps it fast)
+ORG_NAME = "Advance Student Resource Systems, Inc."
+APP_NAME = "ASRS Bot Pro"
+
+MODELS = {
+    "Sonnet 5.5 (recommended)": "claude-sonnet-5-5",
+    "Opus 5.5 (highest quality)": "claude-opus-5-5",
+    "Haiku 5.5 (fastest)": "claude-haiku-5-5",
+    "Fable 5.1 (advanced)": "claude-fable-5-1",
+}
+WEB_TOOLS = [
+    {"type": "web_search_20250305", "name": "web_search", "max_uses": 5},
+    {"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 5},
+]
+MAX_HISTORY = 20          # messages sent per request; keeps responses fast
 TRACKER_FILE = "grant_tracker.json"
 STATUSES = ["Researching", "Drafting", "Submitted", "Awarded", "Declined"]
+AI_AVATAR = ":material/auto_awesome:"
+USER_AVATAR = ":material/person:"
 
-st.set_page_config(page_title="ASRS Bot Pro", page_icon="🟠", layout="wide")
+st.set_page_config(page_title=APP_NAME, page_icon=":material/school:", layout="wide")
 
-# ─── STYLE (light-touch CSS so pages stay fast) ─────────────────────
+# ─── STYLE ──────────────────────────────────────────────────────────
 st.markdown(
     """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=DM+Serif+Display&display=swap');
-html, body, [class*="css"], .stMarkdown, .stButton button { font-family: 'DM Sans', sans-serif; }
-h1, h2, h3 { font-family: 'DM Serif Display', serif !important; font-weight: 400 !important; }
-.block-container { padding-top: 2rem; max-width: 1100px; }
-.asrs-hero { background: linear-gradient(120deg, #d62828 0%, #e85d04 55%, #faa307 100%);
-  border-radius: 16px; padding: 22px 26px; margin-bottom: 18px; color: #fff; }
-.asrs-hero h1 { color: #fff !important; margin: 0; font-size: 2rem; }
-.asrs-hero p { margin: 4px 0 0; opacity: .92; }
-.asrs-tag { display: inline-block; font-size: .72rem; padding: 2px 9px; border-radius: 999px;
-  background: rgba(232,93,4,.18); color: #f48c06; font-weight: 500; }
-.asrs-muted { color: #b5b5b5; font-size: .9rem; }
-[data-testid="stMetricValue"] { color: #f48c06; }
-[data-testid="stChatMessage"] { border-radius: 14px; }
-.stButton button { border-radius: 10px; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+html, body, [class*="css"], .stMarkdown, .stButton button, input, textarea {
+  font-family: 'Inter', system-ui, sans-serif; }
+h1, h2, h3 { font-weight: 600 !important; letter-spacing: -0.01em; }
+.block-container { padding-top: 2.2rem; max-width: 1120px; }
+.page-head { border-bottom: 1px solid #474747; padding-bottom: 14px; margin-bottom: 22px; }
+.page-head .eyebrow { color: #f48c06; font-size: .75rem; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase; }
+.page-head h1 { margin: 2px 0 2px; font-size: 1.85rem; padding: 0; }
+.page-head p { color: #b8b8b8; margin: 0; font-size: .95rem; }
+.brand { border-left: 3px solid #e85d04; padding-left: 10px; margin-bottom: 6px; }
+.brand b { font-size: 1.05rem; } .brand span { display:block; color:#b8b8b8; font-size:.78rem; }
+.tag { display:inline-block; font-size:.7rem; font-weight:500; padding:2px 8px; margin-right:4px;
+  border-radius:4px; background:rgba(232,93,4,.14); color:#f48c06; letter-spacing:.02em; }
+.muted { color:#b8b8b8; font-size:.9rem; line-height:1.5; }
+.footer { color:#8f8f8f; font-size:.75rem; border-top:1px solid #474747; margin-top:36px; padding-top:12px; }
+[data-testid="stMetric"] { background:#363636; border:1px solid #474747; border-radius:8px; padding:12px 16px; }
+[data-testid="stMetricLabel"] p { color:#b8b8b8; font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; }
+[data-testid="stMetricValue"] { font-weight:600; }
+.stButton button, .stDownloadButton button { border-radius:6px; font-weight:500; }
+.login-card { max-width: 420px; margin: 9vh auto 0; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -48,25 +69,31 @@ def get_client():
     return anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
 
 
-def hero(title, subtitle):
-    st.markdown(f'<div class="asrs-hero"><h1>{title}</h1><p>{subtitle}</p></div>',
+def page_header(eyebrow, title, subtitle):
+    st.markdown(f'<div class="page-head"><div class="eyebrow">{eyebrow}</div>'
+                f'<h1>{title}</h1><p>{subtitle}</p></div>', unsafe_allow_html=True)
+
+
+def footer():
+    st.markdown(f'<div class="footer">© {date.today().year} {ORG_NAME} · For internal use. '
+                'AI-generated drafts should be reviewed for accuracy before submission.</div>',
                 unsafe_allow_html=True)
 
 
 def go_chat(prompt):
-    """Send a prompt to the chat page and switch to it."""
+    """Send a prompt to the assistant and open it."""
     st.session_state.pending_prompt = prompt
     st.switch_page(PAGES["chat"])
 
 
 def default_grants():
     return pd.DataFrame([
-        {"Funder": "CNYCF Black Equity & Excellence", "Grant": "2023-24 DSR + E-Gaming",
+        {"Funder": "CNYCF Black Equity & Excellence", "Grant": "2023-24 DriveSafe Robotics + E-Gaming",
          "Amount": 9100, "Deadline": date(2024, 4, 29), "Status": "Awarded",
-         "Notes": "Award letter 2024-10-15"},
+         "Notes": "Award letter dated 2024-10-15"},
         {"Funder": "CNYCF Black Equity & Excellence", "Grant": "2025-26 Multi-program initiative",
          "Amount": 12710, "Deadline": date(2025, 6, 27), "Status": "Submitted",
-         "Notes": "Total initiative $15,715; ASRS self-funds $3,005"},
+         "Notes": "Total initiative $15,715; ASRS contribution $3,005"},
     ])
 
 
@@ -94,7 +121,7 @@ def grants():
 
 
 def file_to_blocks(f):
-    """Turn an uploaded file into content blocks the AI can read."""
+    """Convert an uploaded file into content the assistant can read."""
     data = f.getvalue()
     name = f.name.lower()
     if name.endswith(".pdf"):
@@ -102,9 +129,8 @@ def file_to_blocks(f):
                  "source": {"type": "base64", "media_type": "application/pdf",
                             "data": base64.b64encode(data).decode()}}]
     if name.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
-        media = f.type or "image/png"
         return [{"type": "image",
-                 "source": {"type": "base64", "media_type": media,
+                 "source": {"type": "base64", "media_type": f.type or "image/png",
                             "data": base64.b64encode(data).decode()}}]
     if name.endswith(".docx"):
         from docx import Document
@@ -115,22 +141,46 @@ def file_to_blocks(f):
         sheets = pd.read_excel(io.BytesIO(data), sheet_name=None)
         text = "\n\n".join(f"Sheet {k}:\n{v.to_csv(index=False)}" for k, v in sheets.items())
         return [{"type": "text", "text": f"[Attached spreadsheet: {f.name}]\n{text}"}]
-    text = data.decode("utf-8", errors="ignore")
-    return [{"type": "text", "text": f"[Attached file: {f.name}]\n{text}"}]
+    return [{"type": "text", "text": f"[Attached file: {f.name}]\n{data.decode('utf-8', errors='ignore')}"}]
 
 
-def stream_reply(messages):
-    """Stream the AI reply as text chunks."""
+def stream_reply(messages, status, sources):
+    """Stream the assistant's reply. Fills `sources` with any web pages it cites."""
     system = [{"type": "text", "text": SYSTEM_PROMPT,
-               "cache_control": {"type": "ephemeral"}}]  # prompt caching = faster replies
+               "cache_control": {"type": "ephemeral"}}]  # prompt caching: faster, lower cost
     if st.session_state.get("language") == "Español":
         system.append({"type": "text", "text": "Respond in Spanish (español) unless asked otherwise."})
-    kwargs = dict(model=MODEL, max_tokens=8000, system=system, messages=messages)
-    if st.session_state.get("web_search"):
-        kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
-    with get_client().messages.stream(**kwargs) as stream:
-        for text in stream.text_stream:
-            yield text
+    web = st.session_state.get("web_search")
+    if web:
+        system.append({"type": "text", "text": (
+            f"Today's date is {date.today():%B %d, %Y}. You can search the web and open pages. "
+            "Use them for anything current: open grants, deadlines, funder priorities, news, and "
+            "statistics. Prefer official funder and government sources, and state deadlines exactly "
+            "as the source gives them.")})
+    kwargs = dict(model=MODELS[st.session_state.model_label], max_tokens=8000,
+                  system=system, messages=list(messages))
+    if web:
+        kwargs["tools"] = WEB_TOOLS
+
+    for _ in range(4):  # extended web research can pause; continue automatically
+        with get_client().messages.stream(**kwargs) as stream:
+            for event in stream:
+                if event.type == "content_block_start" and event.content_block.type == "server_tool_use":
+                    status.caption("Searching the web…" if event.content_block.name == "web_search"
+                                   else "Reading source…")
+                elif event.type == "text":
+                    status.empty()
+                    yield event.text
+            final = stream.get_final_message()
+        for block in final.content:
+            for c in (getattr(block, "citations", None) or []):
+                url = getattr(c, "url", None)
+                if url and url not in sources:
+                    sources[url] = getattr(c, "title", None) or url
+        if final.stop_reason != "pause_turn":
+            break
+        kwargs["messages"] = kwargs["messages"] + [{"role": "assistant", "content": final.content}]
+    status.empty()
 
 
 def api_history():
@@ -141,25 +191,28 @@ def api_history():
     return msgs
 
 
-# ─── LOGIN ──────────────────────────────────────────────────────────
+# ─── SIGN-IN ────────────────────────────────────────────────────────
 def login_screen():
-    _, mid, _ = st.columns([1, 1.3, 1])
+    _, mid, _ = st.columns([1, 1.1, 1])
     with mid:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        hero("ASRS Bot Pro", "AI-Powered Grant Assistant · Advance Student Resource Systems")
+        st.markdown('<div class="login-card"></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="page-head"><div class="eyebrow">{ORG_NAME}</div>'
+                    f'<h1>{APP_NAME}</h1><p>Grant development and communications assistant</p></div>',
+                    unsafe_allow_html=True)
         with st.form("login"):
-            pw = st.text_input("Password", type="password")
+            pw = st.text_input("Access code", type="password")
             if st.form_submit_button("Sign in", type="primary", width="stretch"):
                 if hmac.compare_digest(pw, str(st.secrets.get("APP_PASSWORD", "DSR"))):
                     st.session_state.authed = True
                     st.rerun()
                 else:
-                    st.error("Incorrect password")
+                    st.error("The access code is incorrect.")
+        st.caption("Authorized ASRS staff and board members only.")
 
 
 # ─── PAGES ──────────────────────────────────────────────────────────
 def dashboard_page():
-    hero("Welcome back", "Here's where ASRS stands today.")
+    page_header("Overview", "Dashboard", "Organizational impact and grant pipeline at a glance.")
     df = grants()
     awarded = df.loc[df["Status"] == "Awarded", "Amount"].sum()
     pipeline = df.loc[df["Status"].isin(["Researching", "Drafting", "Submitted"]), "Amount"].sum()
@@ -167,23 +220,24 @@ def dashboard_page():
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Students impacted", "5,050+")
     c2.metric("Active programs", len(PROGRAMS))
-    c3.metric("In pipeline", f"${pipeline:,.0f}")
-    c4.metric("Awarded", f"${awarded:,.0f}")
+    c3.metric("Pipeline value", f"${pipeline:,.0f}")
+    c4.metric("Total awarded", f"${awarded:,.0f}")
 
+    st.write("")
     left, right = st.columns([1.4, 1], gap="large")
     with left:
-        st.subheader("Quick actions")
+        st.subheader("Start a document")
         a, b = st.columns(2)
-        if a.button("✍️ Draft a proposal", width="stretch"):
+        if a.button("Draft a grant proposal", icon=":material/article:", width="stretch"):
             go_chat(TEMPLATES[0]["prompt"])
-        if b.button("🔎 Find new grants", width="stretch"):
-            st.session_state.web_search = True
-            go_chat("Search the web for current grant opportunities that fit ASRS's mission "
-                    "(youth STEM, BIPOC students, Syracuse NY and Virginia). List funder, amount, "
-                    "deadline, eligibility, and why ASRS fits.")
-        if a.button("📋 Executive summary", width="stretch"):
+        if b.button("Research open grants", icon=":material/travel_explore:", width="stretch"):
+            go_chat("Research grant opportunities currently open or opening soon that fit ASRS's "
+                    "mission (youth STEM enrichment, BIPOC students, Syracuse NY and Virginia). "
+                    "For each, give the funder, award range, deadline, eligibility, a link, and why "
+                    "ASRS is a strong fit.")
+        if a.button("Executive summary", icon=":material/summarize:", width="stretch"):
             go_chat(TEMPLATES[1]["prompt"])
-        if b.button("💌 Thank-you letter", width="stretch"):
+        if b.button("Donor acknowledgment", icon=":material/mail:", width="stretch"):
             go_chat(TEMPLATES[7]["prompt"])
     with right:
         st.subheader("Upcoming deadlines")
@@ -191,12 +245,16 @@ def dashboard_page():
         open_ = df[df["Status"].isin(["Researching", "Drafting"]) & df["Deadline"].notna()]
         upcoming = open_[open_["Deadline"] >= today].sort_values("Deadline")
         if upcoming.empty:
-            st.markdown('<p class="asrs-muted">No open deadlines. Add grants in the Grant Tracker.</p>',
+            st.markdown('<p class="muted">No open deadlines. Add opportunities in the Grant Tracker.</p>',
                         unsafe_allow_html=True)
         for _, r in upcoming.head(5).iterrows():
             days = (r["Deadline"] - today).days
-            msg = f"**{r['Funder']}** · {r['Grant']} · due {r['Deadline']:%b %d} ({days} days)"
-            st.warning(msg) if days <= 14 else st.info(msg)
+            msg = f"**{r['Funder']}** · {r['Grant']}  \nDue {r['Deadline']:%B %d, %Y} ({days} days)"
+            if days <= 14:
+                st.warning(msg, icon=":material/schedule:")
+            else:
+                st.info(msg, icon=":material/event:")
+    footer()
 
 
 def chat_page():
@@ -204,20 +262,21 @@ def chat_page():
         st.session_state.messages = []
 
     if not st.session_state.messages:
-        hero("ASRS Bot Pro", "Ask for a proposal, a letter, a budget, or anything about ASRS.")
+        page_header("Assistant", "How can I help?",
+                    "Draft proposals, letters, budgets, and reports, or research funders. "
+                    "Attach PDFs, Word, or Excel files for review.")
         cols = st.columns(3)
-        starters = [TEMPLATES[1], TEMPLATES[5], TEMPLATES[9]]
-        for col, t in zip(cols, starters):
-            if col.button(f"{t['icon']} {t['name']}", width="stretch"):
+        for col, t in zip(cols, [TEMPLATES[1], TEMPLATES[5], TEMPLATES[3]]):
+            if col.button(t["name"], icon=t["icon"], width="stretch"):
                 st.session_state.pending_prompt = t["prompt"]
                 st.rerun()
 
     for m in st.session_state.messages:
-        with st.chat_message(m["role"], avatar="🟠" if m["role"] == "assistant" else "👤"):
+        with st.chat_message(m["role"], avatar=AI_AVATAR if m["role"] == "assistant" else USER_AVATAR):
             st.markdown(m["display"])
 
     submitted = st.chat_input(
-        "Message ASRS Bot Pro… (attach PDFs, Word, Excel, images)",
+        "Message ASRS Bot Pro",
         accept_file="multiple",
         file_type=["pdf", "docx", "xlsx", "txt", "csv", "md", "png", "jpg", "jpeg", "webp"],
     )
@@ -227,7 +286,6 @@ def chat_page():
         text, files = submitted.text, submitted.files
     elif st.session_state.get("pending_prompt"):
         text = st.session_state.pop("pending_prompt")
-
     if not (text or files):
         return
 
@@ -237,59 +295,80 @@ def chat_page():
         try:
             content += file_to_blocks(f)
         except Exception as e:
-            st.toast(f"Couldn't read {f.name}: {e}")
+            st.toast(f"Could not read {f.name}: {e}")
     content.append({"type": "text", "text": text})
-    display = text + ("".join(f"\n\n📎 *{f.name}*" for f in files))
+    display = text + "".join(f"\n\n*Attachment: {f.name}*" for f in files)
 
     st.session_state.messages.append({"role": "user", "content": content, "display": display})
-    with st.chat_message("user", avatar="👤"):
+    with st.chat_message("user", avatar=USER_AVATAR):
         st.markdown(display)
 
-    with st.chat_message("assistant", avatar="🟠"):
+    sources = {}
+    with st.chat_message("assistant", avatar=AI_AVATAR):
+        status = st.empty()
         try:
-            reply = st.write_stream(stream_reply(api_history()))
+            reply = st.write_stream(stream_reply(api_history(), status, sources))
         except anthropic.AuthenticationError:
-            reply = "⚠️ The API key isn't valid. Check ANTHROPIC_API_KEY in the app's Secrets."
-            st.error(reply)
+            reply = None
+            st.error("The API key is not valid. An administrator should check ANTHROPIC_API_KEY "
+                     "in the app's Secrets.")
+        except anthropic.NotFoundError:
+            reply = None
+            st.error("This API key does not have access to the selected model. "
+                     "Choose a different model in the sidebar.")
+        except anthropic.BadRequestError as e:
+            reply = None
+            if "web_" in str(e):
+                st.error("Web search is not enabled for this Anthropic account. Enable it in the "
+                         "Anthropic Console, or turn off Live web search in the sidebar.")
+            else:
+                st.error(f"The request could not be completed: {e}")
         except Exception as e:
-            reply = f"⚠️ Something went wrong: {e}"
-            st.error(reply)
+            reply = None
+            st.error(f"The request could not be completed: {e}")
+
     if isinstance(reply, list):
         reply = "".join(str(x) for x in reply)
-    if not reply or reply.startswith("⚠️"):
-        st.session_state.messages.pop()  # drop the failed turn so the next try starts clean
+    if not reply:
+        st.session_state.messages.pop()  # discard the failed request
         return
+    if sources:
+        links = "\n".join(f"- [{title}]({url})" for url, title in list(sources.items())[:8])
+        reply += f"\n\n**Sources**\n{links}"
+        st.markdown(f"**Sources**\n{links}")
     st.session_state.messages.append({"role": "assistant", "content": reply, "display": reply})
-
-    if reply:
-        st.download_button("⬇️ Download reply", reply, file_name=f"asrs_{datetime.now():%Y%m%d_%H%M}.md",
-                           key=f"dl_{len(st.session_state.messages)}")
+    st.download_button("Download response", reply, icon=":material/download:",
+                       file_name=f"ASRS_{datetime.now():%Y-%m-%d_%H%M}.md",
+                       key=f"dl_{len(st.session_state.messages)}")
 
 
 def templates_page():
-    hero("Templates", "One click to a first draft built on ASRS's real data.")
+    page_header("Library", "Document templates",
+                "Generate a first draft grounded in ASRS's programs, outcomes, and budgets.")
     tags = ["All"] + sorted({t["tag"] for t in TEMPLATES})
-    pick = st.segmented_control("Filter", tags, default="All", label_visibility="collapsed")
+    pick = st.segmented_control("Category", tags, default="All", label_visibility="collapsed")
     items = [t for t in TEMPLATES if pick in (None, "All") or t["tag"] == pick]
     cols = st.columns(2, gap="medium")
     for i, t in enumerate(items):
         with cols[i % 2].container(border=True):
-            st.markdown(f"### {t['icon']} {t['name']}")
-            st.markdown(f'<span class="asrs-tag">{t["tag"]}</span>', unsafe_allow_html=True)
-            st.markdown(f'<p class="asrs-muted">{t["desc"]}</p>', unsafe_allow_html=True)
-            if st.button("Use template", key=f"tpl_{t['name']}", type="primary"):
+            st.markdown(f"#### {t['icon']} {t['name']}")
+            st.markdown(f'<span class="tag">{t["tag"].upper()}</span>', unsafe_allow_html=True)
+            st.markdown(f'<p class="muted">{t["desc"]}</p>', unsafe_allow_html=True)
+            if st.button("Generate draft", key=f"tpl_{t['name']}", type="primary",
+                         icon=":material/arrow_forward:"):
                 go_chat(t["prompt"])
+    footer()
 
 
 def tracker_page():
-    hero("Grant Tracker", "Every opportunity from research to award.")
+    page_header("Pipeline", "Grant Tracker", "Track every opportunity from research through award.")
     df = grants()
 
     counts = df["Status"].value_counts()
-    cols = st.columns(len(STATUSES))
-    for col, s in zip(cols, STATUSES):
+    for col, s in zip(st.columns(len(STATUSES)), STATUSES):
         col.metric(s, int(counts.get(s, 0)))
 
+    st.write("")
     with st.form("tracker"):
         edited = st.data_editor(
             df, num_rows="dynamic", width="stretch", hide_index=True,
@@ -302,15 +381,15 @@ def tracker_page():
                 "Notes": st.column_config.TextColumn(width="large"),
             },
         )
-        if st.form_submit_button("💾 Save changes", type="primary"):
+        if st.form_submit_button("Save changes", type="primary", icon=":material/save:"):
             st.session_state.grants = edited.reset_index(drop=True)
             save_grants(st.session_state.grants)
-            st.toast("Tracker saved")
+            st.toast("Grant tracker saved.")
             st.rerun()
 
     c1, c2 = st.columns(2)
-    c1.download_button("⬇️ Export to CSV", df.to_csv(index=False), "asrs_grants.csv",
-                       width="stretch")
+    c1.download_button("Export to CSV", df.to_csv(index=False), "ASRS_grant_pipeline.csv",
+                       icon=":material/download:", width="stretch")
     up = c2.file_uploader("Import CSV", type="csv", label_visibility="collapsed")
     if up is not None and st.session_state.get("last_import") != up.file_id:
         new = pd.read_csv(up)
@@ -319,23 +398,23 @@ def tracker_page():
         st.session_state.last_import = up.file_id
         save_grants(new)
         st.rerun()
-    st.caption("Tip: export a CSV backup now and then. Streamlit Cloud can reset saved files "
-               "when the app restarts.")
+    st.caption("Export a CSV backup regularly. Hosted storage may reset when the app restarts.")
+    footer()
 
 
 def programs_page():
-    hero("Programs", "Everything ASRS runs, and a quick way to write about it.")
+    page_header("Portfolio", "Programs", "ASRS initiatives, reach, and history.")
     cols = st.columns(2, gap="medium")
     for i, p in enumerate(PROGRAMS):
         with cols[i % 2].container(border=True):
-            st.markdown(f"### {p['icon']} {p['name']}")
-            st.markdown(f'<span class="asrs-tag">Since {p["since"]}</span> '
-                        f'<span class="asrs-tag">{p["students"]} students</span>',
-                        unsafe_allow_html=True)
-            st.markdown(f'<p class="asrs-muted">{p["desc"]}</p>', unsafe_allow_html=True)
-            if st.button("Write a proposal for this", key=f"prog_{i}"):
-                go_chat(f"Write a grant proposal focused on ASRS's {p['name']} program, using our real "
-                        f"outcomes, budget figures, and partners.")
+            st.markdown(f"#### {p['icon']} {p['name']}")
+            st.markdown(f'<span class="tag">SINCE {p["since"]}</span>'
+                        f'<span class="tag">{p["students"]} STUDENTS</span>', unsafe_allow_html=True)
+            st.markdown(f'<p class="muted">{p["desc"]}</p>', unsafe_allow_html=True)
+            if st.button("Draft program proposal", key=f"prog_{i}", icon=":material/arrow_forward:"):
+                go_chat(f"Write a grant proposal focused on ASRS's {p['name']} program, using our "
+                        "documented outcomes, budget figures, and partners.")
+    footer()
 
 
 # ─── APP ────────────────────────────────────────────────────────────
@@ -345,26 +424,34 @@ if not st.session_state.get("authed"):
 
 PAGES = {
     "dashboard": st.Page(dashboard_page, title="Dashboard", icon=":material/space_dashboard:", default=True),
-    "chat": st.Page(chat_page, title="AI Chat", icon=":material/chat:"),
+    "chat": st.Page(chat_page, title="Assistant", icon=":material/forum:"),
     "templates": st.Page(templates_page, title="Templates", icon=":material/description:"),
     "tracker": st.Page(tracker_page, title="Grant Tracker", icon=":material/table_chart:"),
     "programs": st.Page(programs_page, title="Programs", icon=":material/school:"),
 }
 
 with st.sidebar:
-    st.markdown("## 🟠 ASRS Bot Pro")
-    st.caption("AI-Powered Grant Assistant")
+    st.markdown(f'<div class="brand"><b>{APP_NAME}</b><span>{ORG_NAME}</span></div>',
+                unsafe_allow_html=True)
 
 nav = st.navigation(list(PAGES.values()))
 
 with st.sidebar:
     st.divider()
-    st.selectbox("Language", ["English", "Español"], key="language")
-    st.toggle("Web search", key="web_search", help="Let the AI look up current grants and funders.")
-    if st.button("🆕 New chat", width="stretch"):
+    st.session_state.setdefault("model_label", next(iter(MODELS)))
+    st.session_state.setdefault("web_search", True)
+    st.selectbox("AI model", list(MODELS), key="model_label",
+                 help="Sonnet suits everyday work. Opus produces the strongest long-form proposals. "
+                      "Haiku is fastest and lowest cost.")
+    st.selectbox("Response language", ["English", "Español"], key="language")
+    st.toggle("Live web search", key="web_search",
+              help="Allows the assistant to search the web and read pages for current grants, "
+                   "deadlines, and funder information.")
+    st.divider()
+    if st.button("New conversation", icon=":material/add:", width="stretch"):
         st.session_state.messages = []
         st.switch_page(PAGES["chat"])
-    if st.button("Log out", width="stretch"):
+    if st.button("Sign out", icon=":material/logout:", width="stretch"):
         st.session_state.clear()
         st.rerun()
 
